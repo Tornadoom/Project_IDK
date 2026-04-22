@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main id="authView" class="auth-shell hidden">
+      <section class="auth-panel">
+        <div>
+          <p class="eyebrow">PROJECT IDK</p>
+          <h1>Dashboard</h1>
+        </div>
+        <div class="auth-tabs" role="tablist">
+          <button class="active" data-auth-tab="login">登录</button>
+          <button data-auth-tab="register">注册</button>
+        </div>
+        <form id="loginForm" class="auth-form">
+          <label>用户名<input name="username" required autocomplete="username" /></label>
+          <label>密码<input name="password" type="password" required autocomplete="current-password" /></label>
+          <button type="submit" class="primary full">登录</button>
+        </form>
+        <form id="registerForm" class="auth-form hidden">
+          <label>用户名<input name="username" required autocomplete="username" placeholder="英文、数字、下划线" /></label>
+          <label>昵称<input name="nickname" required autocomplete="nickname" placeholder="支持中文" /></label>
+          <label>密码<input name="password" type="password" required autocomplete="new-password" /></label>
+          <label>邀请码<input name="invite" required placeholder="RQSB" /></label>
+          <button type="submit" class="primary full">注册</button>
+        </form>
+        <p id="authMessage" class="message"></p>
+      </section>
+    </main>
+
+    <main id="appView" class="app hidden">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">D</span>
+          <div>
+            <strong>Dashboard</strong>
+            <small>本地服务端存储</small>
+          </div>
+        </div>
+        <nav>
+          <button class="nav-link active" data-view="home">总览</button>
+          <button class="nav-link" data-view="todos">待办事项</button>
+          <button class="nav-link" data-view="cart">购物车</button>
+          <button class="nav-link" data-view="logs">修改日志</button>
+        </nav>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">工作台</p>
+            <h2 id="pageTitle">总览</h2>
+          </div>
+          <div class="profile">
+            <button id="exportMdBtn" class="ghost">导出 MD</button>
+            <button id="exportXlsxBtn" class="ghost">导出 Excel</button>
+            <button id="backupBtn" class="ghost">立即备份</button>
+            <button id="avatarBtn" class="avatar-btn"><img id="avatarImg" alt="" /><span id="avatarFallback">头像</span></button>
+            <input id="avatarInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+            <input id="nicknameInput" class="nickname-input" />
+            <button id="saveNicknameBtn" class="ghost">保存昵称</button>
+            <button id="logoutBtn" class="danger-text">退出</button>
+          </div>
+        </header>
+
+        <section id="homeView" class="view">
+          <div class="stats-grid">
+            <article><span>待办事项</span><strong id="todoCount">0</strong></article>
+            <article><span>P0 紧急</span><strong id="p0Count">0</strong></article>
+            <article><span>待购买</span><strong id="buyCount">0</strong></article>
+          </div>
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-head"><h3>最近截止</h3></div>
+              <div id="homeTodos" class="compact-list"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head"><h3>待购买商品</h3></div>
+              <div id="homeCart" class="compact-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="todosView" class="view hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>待办事项</h3>
+              <div class="actions">
+                <button id="sortTodosBtn" class="ghost">按截止时间排序</button>
+                <button id="newTodoBtn" class="primary">新增事项</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>事项</th><th>截止时间</th><th>紧急度</th><th>相关链接</th><th>备注</th><th>操作</th></tr>
+                </thead>
+                <tbody id="todoTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="cartView" class="view hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>购物车</h3>
+              <button id="newCartBtn" class="primary">新增商品</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>商品名</th><th>图片详情</th><th>嘟嘟同意</th><th>脑婆同意</th><th>状态</th><th>操作</th></tr>
+                </thead>
+                <tbody id="cartTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="logsView" class="view hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>修改日志</h3>
+              <div class="actions log-filter">
+                <input id="logDateInput" type="date" />
+                <button id="clearLogDateBtn" class="ghost">全部日期</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>时间</th><th>动作</th><th>模块</th><th>对象</th><th>摘要</th></tr>
+                </thead>
+                <tbody id="logsTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="todoDialog">
+      <form id="todoForm" method="dialog" class="dialog-form">
+        <h3 id="todoDialogTitle">新增事项</h3>
+        <input name="id" type="hidden" />
+        <label>事项 *<input name="item" required /></label>
+        <div class="form-row">
+          <label>截止日期<input name="due_date" type="date" /></label>
+          <label>截止时间<input name="due_time" type="time" step="900" /></label>
+        </div>
+        <label>相关链接<input name="link" type="url" placeholder="https://example.com" /></label>
+        <label>紧急度
+          <select name="priority">
+            <option value="P0">P0 紧急</option>
+            <option value="P1">P1 较紧急</option>
+            <option value="P2">P2 自然推进</option>
+          </select>
+        </label>
+        <label>备注<textarea name="notes" rows="4"></textarea></label>
+        <div class="dialog-actions">
+          <button type="button" class="ghost" data-close>取消</button>
+          <button type="submit" class="primary">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="cartDialog">
+      <form id="cartForm" method="dialog" class="dialog-form">
+        <h3 id="cartDialogTitle">新增商品</h3>
+        <input name="id" type="hidden" />
+        <input name="imageData" type="hidden" />
+        <label>商品名 *<input name="product_name" required /></label>
+        <label>图片详情<input id="cartImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
+        <div id="cartImageName" class="file-note">未选择图片</div>
+        <div class="dialog-actions">
+          <button type="button" class="ghost" data-close>取消</button>
+          <button type="submit" class="primary">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="imageDialog">
+      <div class="dialog-form">
+        <h3>图片详情</h3>
+        <img id="detailImage" class="detail-image" alt="商品图片" />
+        <div class="dialog-actions"><button type="button" class="primary" data-close>关闭</button></div>
+      </div>
+    </dialog>
+
+    <dialog id="cropDialog">
+      <div class="dialog-form crop-dialog">
+        <h3>裁剪头像</h3>
+        <canvas id="cropCanvas" width="320" height="320"></canvas>
+        <label>缩放<input id="cropZoom" type="range" min="1" max="3" value="1" step="0.05" /></label>
+        <div class="dialog-actions">
+          <button type="button" class="ghost" data-close>取消</button>
+          <button id="saveAvatarBtn" type="button" class="primary">保存头像</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
