@@ -119,9 +119,16 @@ def init_db() -> None:
                 PRIMARY KEY (user_id, key)
             );
 
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_todos_user_due ON todos(user_id, due_date, due_time);
             CREATE INDEX IF NOT EXISTS idx_todos_due ON todos(due_date, due_time);
             CREATE INDEX IF NOT EXISTS idx_cart_user_updated ON cart_items(user_id, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_cart_updated ON cart_items(updated_at);
             CREATE INDEX IF NOT EXISTS idx_logs_user_created ON activity_logs(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(token, expires_at);
             """
@@ -247,10 +254,12 @@ def get_user_from_token(token: str | None) -> sqlite3.Row | None:
     return row
 
 
-def get_cart_labels(user_id: int) -> dict:
+def get_cart_labels() -> dict:
     labels = {"agree_a": "A", "agree_b": "B"}
     with db() as conn:
-        row = conn.execute("SELECT value FROM user_settings WHERE user_id = ? AND key = 'cart_labels'", (user_id,)).fetchone()
+        row = conn.execute("SELECT value FROM app_settings WHERE key = 'cart_labels'").fetchone()
+        if not row:
+            row = conn.execute("SELECT value FROM user_settings WHERE key = 'cart_labels' ORDER BY updated_at DESC LIMIT 1").fetchone()
     if row:
         try:
             saved = json.loads(row["value"])
@@ -261,7 +270,7 @@ def get_cart_labels(user_id: int) -> dict:
     return labels
 
 
-def save_cart_labels(user_id: int, labels: dict) -> dict:
+def save_cart_labels(labels: dict) -> dict:
     cleaned = {
         "agree_a": (labels.get("agree_a") or "A").strip()[:20] or "A",
         "agree_b": (labels.get("agree_b") or "B").strip()[:20] or "B",
@@ -269,22 +278,22 @@ def save_cart_labels(user_id: int, labels: dict) -> dict:
     with db() as conn:
         conn.execute(
             """
-            INSERT INTO user_settings (user_id, key, value, updated_at)
-            VALUES (?, 'cart_labels', ?, ?)
-            ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES ('cart_labels', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
             """,
-            (user_id, json.dumps(cleaned, ensure_ascii=False), now_iso()),
+            (json.dumps(cleaned, ensure_ascii=False), now_iso()),
         )
     return cleaned
 
 
 def generate_markdown(user_id: int) -> str:
-    labels = get_cart_labels(user_id)
+    labels = get_cart_labels()
     with db() as conn:
         todos = conn.execute(
             "SELECT * FROM todos ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')",
         ).fetchall()
-        carts = conn.execute("SELECT * FROM cart_items WHERE user_id = ? ORDER BY updated_at DESC", (user_id,)).fetchall()
+        carts = conn.execute("SELECT * FROM cart_items ORDER BY updated_at DESC").fetchall()
     lines = ["# Dashboard Export", "", f"导出时间：{now_iso()}", "", "## 待办事项", ""]
     lines.append("|事项|截止日期|截止时间|链接|紧急度|备注|")
     lines.append("|---|---|---|---|---|---|")
@@ -325,12 +334,12 @@ def xlsx_sheet_xml(name: str, rows: list[list[str]]) -> str:
 
 
 def generate_xlsx(user_id: int) -> bytes:
-    labels = get_cart_labels(user_id)
+    labels = get_cart_labels()
     with db() as conn:
         todos = conn.execute(
             "SELECT * FROM todos ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')",
         ).fetchall()
-        carts = conn.execute("SELECT * FROM cart_items WHERE user_id = ? ORDER BY updated_at DESC", (user_id,)).fetchall()
+        carts = conn.execute("SELECT * FROM cart_items ORDER BY updated_at DESC").fetchall()
     todo_rows = [["事项", "截止日期", "截止时间", "链接", "紧急度", "备注"]]
     todo_rows += [[r["item"], r["due_date"] or "", r["due_time"] or "", r["link"] or "", r["priority"], r["notes"] or ""] for r in todos]
     cart_rows = [["商品名", f"{labels['agree_a']}同意", f"{labels['agree_b']}同意", "状态", "图片"]]
@@ -559,13 +568,13 @@ class Handler(BaseHTTPRequestHandler):
         user = self.require_user()
         if not user:
             return
-        self.send_json(get_cart_labels(user["id"]))
+        self.send_json(get_cart_labels())
 
     def update_cart_label_settings(self) -> None:
         user = self.require_user()
         if not user:
             return
-        labels = save_cart_labels(user["id"], self.json_body())
+        labels = save_cart_labels(self.json_body())
         log_activity(user["id"], "update", "cart_labels", user["id"], labels)
         self.send_json({"ok": True, **labels})
 
@@ -652,7 +661,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             return
         with db() as conn:
-            rows = conn.execute("SELECT * FROM cart_items WHERE user_id = ? ORDER BY updated_at DESC", (user["id"],)).fetchall()
+            rows = conn.execute("SELECT * FROM cart_items ORDER BY updated_at DESC").fetchall()
         payload = []
         for row in rows:
             item = row_dict(row)
@@ -685,7 +694,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self.cart_payload()
         with db() as conn:
-            current = conn.execute("SELECT * FROM cart_items WHERE id = ? AND user_id = ?", (item_id, user["id"])).fetchone()
+            current = conn.execute("SELECT * FROM cart_items WHERE id = ?", (item_id,)).fetchone()
             if not current:
                 raise ValueError("商品不存在")
             image_path = current["image_path"]
@@ -696,9 +705,9 @@ class Handler(BaseHTTPRequestHandler):
             conn.execute(
                 """
                 UPDATE cart_items SET product_name = ?, image_path = ?, agree_a = ?, agree_b = ?, updated_at = ?
-                WHERE id = ? AND user_id = ?
+                WHERE id = ?
                 """,
-                (body["product_name"], image_path, body["agree_a"], body["agree_b"], now_iso(), item_id, user["id"]),
+                (body["product_name"], image_path, body["agree_a"], body["agree_b"], now_iso(), item_id),
             )
         log_activity(user["id"], "update", "cart", item_id, {**body, "image_path": image_path})
         self.send_json({"ok": True})
@@ -708,7 +717,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             return
         with db() as conn:
-            cur = conn.execute("DELETE FROM cart_items WHERE id = ? AND user_id = ?", (item_id, user["id"]))
+            cur = conn.execute("DELETE FROM cart_items WHERE id = ?", (item_id,))
         if cur.rowcount == 0:
             raise ValueError("商品不存在")
         log_activity(user["id"], "delete", "cart", item_id, {})
@@ -732,12 +741,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         query = parse_qs(urlparse(self.path).query)
         date_value = (query.get("date", [""])[0] or "").strip()
-        where = "WHERE user_id = ? OR user_id IS NULL OR entity = 'todo'"
+        where = "WHERE user_id = ? OR user_id IS NULL OR entity IN ('todo', 'cart', 'cart_labels')"
         params: list = [user["id"]]
         if date_value:
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_value):
                 raise ValueError("日志日期格式不正确")
-            where = "WHERE (user_id = ? OR user_id IS NULL OR entity = 'todo') AND substr(created_at, 1, 10) = ?"
+            where = "WHERE (user_id = ? OR user_id IS NULL OR entity IN ('todo', 'cart', 'cart_labels')) AND substr(created_at, 1, 10) = ?"
             params.append(date_value)
         with db() as conn:
             rows = conn.execute(
