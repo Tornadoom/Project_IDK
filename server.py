@@ -29,7 +29,9 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 BACKUP_DIR = DATA_DIR / "backups"
 LOG_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "dashboard.db"
-INVITE_CODE = "RQSB"
+DEFAULT_INVITE_CODE_HASH = "a2659fe460ae1a08406a3b9afc7def37efb809df36927762def965070174570d"
+INVITE_CODE_HASH = os.getenv("DASHBOARD_INVITE_CODE_HASH", DEFAULT_INVITE_CODE_HASH)
+INVITE_CODE_RAW = os.getenv("DASHBOARD_INVITE_CODE")
 BACKUP_INTERVAL_SECONDS = 12 * 60 * 60
 SESSION_COOKIE = "dashboard_session"
 
@@ -47,12 +49,16 @@ def db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 8000")
     return conn
 
 
 def init_db() -> None:
     ensure_dirs()
     with db() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA temp_store = MEMORY")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -104,6 +110,19 @@ def init_db() -> None:
                 details TEXT,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_todos_user_due ON todos(user_id, due_date, due_time);
+            CREATE INDEX IF NOT EXISTS idx_cart_user_updated ON cart_items(user_id, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_logs_user_created ON activity_logs(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(token, expires_at);
             """
         )
 
@@ -121,6 +140,14 @@ def verify_password(password: str, stored: str) -> bool:
         return False
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 180_000)
     return hmac.compare_digest(digest.hex(), expected)
+
+
+def verify_invite_code(invite: str) -> bool:
+    invite = (invite or "").strip()
+    if INVITE_CODE_RAW:
+        return hmac.compare_digest(invite, INVITE_CODE_RAW)
+    digest = hashlib.sha256(invite.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(digest, INVITE_CODE_HASH)
 
 
 def log_activity(user_id: int | None, action: str, entity: str, entity_id: int | None, details: dict | None = None) -> None:
@@ -219,7 +246,39 @@ def get_user_from_token(token: str | None) -> sqlite3.Row | None:
     return row
 
 
+def get_cart_labels(user_id: int) -> dict:
+    labels = {"agree_a": "A", "agree_b": "B"}
+    with db() as conn:
+        row = conn.execute("SELECT value FROM user_settings WHERE user_id = ? AND key = 'cart_labels'", (user_id,)).fetchone()
+    if row:
+        try:
+            saved = json.loads(row["value"])
+            labels["agree_a"] = (saved.get("agree_a") or "A").strip()[:20] or "A"
+            labels["agree_b"] = (saved.get("agree_b") or "B").strip()[:20] or "B"
+        except json.JSONDecodeError:
+            pass
+    return labels
+
+
+def save_cart_labels(user_id: int, labels: dict) -> dict:
+    cleaned = {
+        "agree_a": (labels.get("agree_a") or "A").strip()[:20] or "A",
+        "agree_b": (labels.get("agree_b") or "B").strip()[:20] or "B",
+    }
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO user_settings (user_id, key, value, updated_at)
+            VALUES (?, 'cart_labels', ?, ?)
+            ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (user_id, json.dumps(cleaned, ensure_ascii=False), now_iso()),
+        )
+    return cleaned
+
+
 def generate_markdown(user_id: int) -> str:
+    labels = get_cart_labels(user_id)
     with db() as conn:
         todos = conn.execute(
             "SELECT * FROM todos WHERE user_id = ? ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')",
@@ -235,7 +294,7 @@ def generate_markdown(user_id: int) -> str:
         lines.append(
             f"|{item['item']}|{item['due_date'] or ''}|{item['due_time'] or ''}|{link_md}|{item['priority']}|{(item['notes'] or '').replace('|', '/') }|"
         )
-    lines.extend(["", "## 购物车", "", "|商品名|嘟嘟同意|脑婆同意|状态|图片|", "|---|---|---|---|---|"])
+    lines.extend(["", "## 购物车", "", f"|商品名|{labels['agree_a']}同意|{labels['agree_b']}同意|状态|图片|", "|---|---|---|---|---|"])
     for item in carts:
         status = "待购买" if item["agree_a"] and item["agree_b"] else "待确认"
         lines.append(
@@ -266,6 +325,7 @@ def xlsx_sheet_xml(name: str, rows: list[list[str]]) -> str:
 
 
 def generate_xlsx(user_id: int) -> bytes:
+    labels = get_cart_labels(user_id)
     with db() as conn:
         todos = conn.execute(
             "SELECT * FROM todos WHERE user_id = ? ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')",
@@ -274,7 +334,7 @@ def generate_xlsx(user_id: int) -> bytes:
         carts = conn.execute("SELECT * FROM cart_items WHERE user_id = ? ORDER BY updated_at DESC", (user_id,)).fetchall()
     todo_rows = [["事项", "截止日期", "截止时间", "链接", "紧急度", "备注"]]
     todo_rows += [[r["item"], r["due_date"] or "", r["due_time"] or "", r["link"] or "", r["priority"], r["notes"] or ""] for r in todos]
-    cart_rows = [["商品名", "嘟嘟同意", "脑婆同意", "状态", "图片"]]
+    cart_rows = [["商品名", f"{labels['agree_a']}同意", f"{labels['agree_b']}同意", "状态", "图片"]]
     cart_rows += [
         [r["product_name"], "是" if r["agree_a"] else "否", "是" if r["agree_b"] else "否", "待购买" if r["agree_a"] and r["agree_b"] else "待确认", r["image_path"] or ""]
         for r in carts
@@ -315,6 +375,8 @@ class Handler(BaseHTTPRequestHandler):
         self.handle_api("DELETE", urlparse(self.path))
 
     def log_message(self, fmt: str, *args) -> None:
+        if not self.path.startswith("/api/"):
+            return
         with (LOG_DIR / "access.log").open("a", encoding="utf-8") as fh:
             fh.write(f"{now_iso()} {self.address_string()} {fmt % args}\n")
 
@@ -365,6 +427,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.update_profile()
             if path == "/api/profile/avatar" and method == "POST":
                 return self.update_avatar()
+            if path == "/api/settings/cart-labels":
+                if method == "GET":
+                    return self.get_cart_label_settings()
+                if method == "PUT":
+                    return self.update_cart_label_settings()
             if path == "/api/todos":
                 if method == "GET":
                     return self.list_todos()
@@ -410,7 +477,7 @@ class Handler(BaseHTTPRequestHandler):
         username = (body.get("username") or "").strip()
         nickname = (body.get("nickname") or "").strip()
         password = body.get("password") or ""
-        if body.get("invite") != INVITE_CODE:
+        if not verify_invite_code(body.get("invite") or ""):
             raise ValueError("邀请码不正确")
         if not username or not nickname or not password:
             raise ValueError("用户名、昵称和密码都必须填写")
@@ -488,6 +555,20 @@ class Handler(BaseHTTPRequestHandler):
             conn.execute("UPDATE users SET avatar_path = ? WHERE id = ?", (path, user["id"]))
         log_activity(user["id"], "update_avatar", "profile", user["id"], {"avatar_path": path})
         self.send_json({"ok": True, "avatar_url": public_data_url(path)})
+
+    def get_cart_label_settings(self) -> None:
+        user = self.require_user()
+        if not user:
+            return
+        self.send_json(get_cart_labels(user["id"]))
+
+    def update_cart_label_settings(self) -> None:
+        user = self.require_user()
+        if not user:
+            return
+        labels = save_cart_labels(user["id"], self.json_body())
+        log_activity(user["id"], "update", "cart_labels", user["id"], labels)
+        self.send_json({"ok": True, **labels})
 
     def list_todos(self) -> None:
         user = self.require_user()
@@ -741,7 +822,11 @@ def main() -> None:
     args = parser.parse_args()
     init_db()
     threading.Thread(target=backup_worker, daemon=True).start()
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    class DashboardServer(ThreadingHTTPServer):
+        daemon_threads = True
+        request_queue_size = 128
+
+    server = DashboardServer((args.host, args.port), Handler)
     print(f"Dashboard running at http://{args.host}:{args.port}")
     server.serve_forever()
 

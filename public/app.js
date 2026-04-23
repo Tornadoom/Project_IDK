@@ -3,6 +3,7 @@ const state = {
   todos: [],
   cart: [],
   logs: [],
+  labels: { agree_a: "A", agree_b: "B" },
   todoSortDue: false,
   logDate: "",
   cropImage: null,
@@ -101,8 +102,10 @@ function bindEvents() {
   $("#todoForm").addEventListener("submit", saveTodo);
 
   $("#newCartBtn").addEventListener("click", () => openCartDialog());
+  $("#cartLabelBtn").addEventListener("click", openCartLabelDialog);
   $("#cartImageInput").addEventListener("change", loadCartImage);
   $("#cartForm").addEventListener("submit", saveCart);
+  $("#cartLabelForm").addEventListener("submit", saveCartLabels);
   $("#logDateInput").addEventListener("change", async (event) => {
     state.logDate = event.target.value;
     await loadLogs();
@@ -159,8 +162,14 @@ function setView(view) {
 }
 
 async function refreshAll() {
+  await loadCartLabels();
   await Promise.all([loadTodos(), loadCart(), loadLogs()]);
   renderHome();
+}
+
+async function loadCartLabels() {
+  state.labels = await api("/api/settings/cart-labels");
+  renderCartLabels();
 }
 
 async function loadTodos() {
@@ -218,8 +227,8 @@ function renderCart() {
     <tr>
       <td><strong>${escapeHtml(item.product_name)}</strong></td>
       <td>${item.image_url ? `<button class="ghost" onclick="showImage('${escapeAttr(item.image_url)}')">查看图片</button>` : "无图片"}</td>
-      <td><label class="inline-check"><input type="checkbox" ${item.agree_a ? "checked" : ""} onchange="toggleCartAgree(${item.id}, 'agree_a', this.checked)" /> 嘟嘟</label></td>
-      <td><label class="inline-check"><input type="checkbox" ${item.agree_b ? "checked" : ""} onchange="toggleCartAgree(${item.id}, 'agree_b', this.checked)" /> 脑婆</label></td>
+      <td><label class="inline-check"><input type="checkbox" ${item.agree_a ? "checked" : ""} onchange="toggleCartAgree(${item.id}, 'agree_a', this.checked)" /> ${escapeHtml(state.labels.agree_a)}</label></td>
+      <td><label class="inline-check"><input type="checkbox" ${item.agree_b ? "checked" : ""} onchange="toggleCartAgree(${item.id}, 'agree_b', this.checked)" /> ${escapeHtml(state.labels.agree_b)}</label></td>
       <td class="${item.status === "待购买" ? "status-buy" : ""}">${item.status}</td>
       <td><div class="row-actions">
         <button class="ghost" onclick="editCart(${item.id})">编辑</button>
@@ -227,6 +236,11 @@ function renderCart() {
       </div></td>
     </tr>
   `).join("") || `<tr><td colspan="6">暂无数据</td></tr>`;
+}
+
+function renderCartLabels() {
+  $("#agreeAHead").textContent = `${state.labels.agree_a}同意`;
+  $("#agreeBHead").textContent = `${state.labels.agree_b}同意`;
 }
 
 function renderLogs() {
@@ -347,6 +361,29 @@ async function saveCart(event) {
   $("#cartDialog").close();
   toast("已保存商品");
   await refreshAll();
+}
+
+function openCartLabelDialog() {
+  const form = $("#cartLabelForm");
+  form.agree_a.value = state.labels.agree_a || "A";
+  form.agree_b.value = state.labels.agree_b || "B";
+  $("#cartLabelDialog").showModal();
+}
+
+async function saveCartLabels(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const labels = {
+    agree_a: form.agree_a.value.trim() || "A",
+    agree_b: form.agree_b.value.trim() || "B",
+  };
+  const saved = await api("/api/settings/cart-labels", { method: "PUT", body: JSON.stringify(labels) });
+  state.labels = { agree_a: saved.agree_a, agree_b: saved.agree_b };
+  renderCartLabels();
+  renderCart();
+  $("#cartLabelDialog").close();
+  toast("同意人名称已更新");
+  await loadLogs();
 }
 
 window.showImage = (url) => {

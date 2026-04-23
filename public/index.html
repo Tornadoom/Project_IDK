@@ -26,7 +26,7 @@
           <label>用户名<input name="username" required autocomplete="username" placeholder="英文、数字、下划线" /></label>
           <label>昵称<input name="nickname" required autocomplete="nickname" placeholder="支持中文" /></label>
           <label>密码<input name="password" type="password" required autocomplete="new-password" /></label>
-          <label>邀请码<input name="invite" required placeholder="RQSB" /></label>
+          <label>邀请码<input name="invite" required placeholder="请输入邀请码" /></label>
           <button type="submit" class="primary full">注册</button>
         </form>
         <p id="authMessage" class="message"></p>
@@ -110,12 +110,15 @@
           <div class="panel">
             <div class="panel-head">
               <h3>购物车</h3>
-              <button id="newCartBtn" class="primary">新增商品</button>
+              <div class="actions">
+                <button id="cartLabelBtn" class="ghost">设置同意人</button>
+                <button id="newCartBtn" class="primary">新增商品</button>
+              </div>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>商品名</th><th>图片详情</th><th>嘟嘟同意</th><th>脑婆同意</th><th>状态</th><th>操作</th></tr>
+                  <tr><th>商品名</th><th>图片详情</th><th id="agreeAHead">A同意</th><th id="agreeBHead">B同意</th><th>状态</th><th>操作</th></tr>
                 </thead>
                 <tbody id="cartTable"></tbody>
               </table>
@@ -191,6 +194,18 @@
         <img id="detailImage" class="detail-image" alt="商品图片" />
         <div class="dialog-actions"><button type="button" class="primary" data-close>关闭</button></div>
       </div>
+    </dialog>
+
+    <dialog id="cartLabelDialog">
+      <form id="cartLabelForm" method="dialog" class="dialog-form">
+        <h3>设置同意人</h3>
+        <label>A 的显示名<input name="agree_a" maxlength="20" required /></label>
+        <label>B 的显示名<input name="agree_b" maxlength="20" required /></label>
+        <div class="dialog-actions">
+          <button type="button" class="ghost" data-close>取消</button>
+          <button type="submit" class="primary">保存</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="cropDialog">
