@@ -347,13 +347,13 @@ async function loadCartImage(event) {
 async function saveCart(event) {
   event.preventDefault();
   const form = event.currentTarget;
+  const id = form.id.value;
   const body = {
     product_name: form.product_name.value,
     image: form.imageData.value || null,
     agree_a: id ? Boolean(state.cart.find((item) => item.id === Number(id))?.agree_a) : false,
     agree_b: id ? Boolean(state.cart.find((item) => item.id === Number(id))?.agree_b) : false,
   };
-  const id = form.id.value;
   await api(id ? `/api/cart/${id}` : "/api/cart", {
     method: id ? "PUT" : "POST",
     body: JSON.stringify(body),

@@ -120,6 +120,7 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_todos_user_due ON todos(user_id, due_date, due_time);
+            CREATE INDEX IF NOT EXISTS idx_todos_due ON todos(due_date, due_time);
             CREATE INDEX IF NOT EXISTS idx_cart_user_updated ON cart_items(user_id, updated_at);
             CREATE INDEX IF NOT EXISTS idx_logs_user_created ON activity_logs(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(token, expires_at);
@@ -281,8 +282,7 @@ def generate_markdown(user_id: int) -> str:
     labels = get_cart_labels(user_id)
     with db() as conn:
         todos = conn.execute(
-            "SELECT * FROM todos WHERE user_id = ? ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')",
-            (user_id,),
+            "SELECT * FROM todos ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')",
         ).fetchall()
         carts = conn.execute("SELECT * FROM cart_items WHERE user_id = ? ORDER BY updated_at DESC", (user_id,)).fetchall()
     lines = ["# Dashboard Export", "", f"导出时间：{now_iso()}", "", "## 待办事项", ""]
@@ -328,8 +328,7 @@ def generate_xlsx(user_id: int) -> bytes:
     labels = get_cart_labels(user_id)
     with db() as conn:
         todos = conn.execute(
-            "SELECT * FROM todos WHERE user_id = ? ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')",
-            (user_id,),
+            "SELECT * FROM todos ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')",
         ).fetchall()
         carts = conn.execute("SELECT * FROM cart_items WHERE user_id = ? ORDER BY updated_at DESC", (user_id,)).fetchall()
     todo_rows = [["事项", "截止日期", "截止时间", "链接", "紧急度", "备注"]]
@@ -579,7 +578,7 @@ class Handler(BaseHTTPRequestHandler):
         if query.get("sort", [""])[0] == "due":
             order = "ORDER BY COALESCE(due_date, '9999-12-31'), COALESCE(due_time, '23:59')"
         with db() as conn:
-            rows = conn.execute(f"SELECT * FROM todos WHERE user_id = ? {order}", (user["id"],)).fetchall()
+            rows = conn.execute(f"SELECT * FROM todos {order}").fetchall()
         self.send_json([row_dict(row) for row in rows])
 
     def create_todo(self) -> None:
@@ -608,9 +607,9 @@ class Handler(BaseHTTPRequestHandler):
             cur = conn.execute(
                 """
                 UPDATE todos SET item = ?, due_date = ?, due_time = ?, link = ?, notes = ?, priority = ?, updated_at = ?
-                WHERE id = ? AND user_id = ?
+                WHERE id = ?
                 """,
-                (body["item"], body["due_date"], body["due_time"], body["link"], body["notes"], body["priority"], now_iso(), todo_id, user["id"]),
+                (body["item"], body["due_date"], body["due_time"], body["link"], body["notes"], body["priority"], now_iso(), todo_id),
             )
         if cur.rowcount == 0:
             raise ValueError("待办不存在")
@@ -622,7 +621,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             return
         with db() as conn:
-            cur = conn.execute("DELETE FROM todos WHERE id = ? AND user_id = ?", (todo_id, user["id"]))
+            cur = conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
         if cur.rowcount == 0:
             raise ValueError("待办不存在")
         log_activity(user["id"], "delete", "todo", todo_id, {})
@@ -733,12 +732,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         query = parse_qs(urlparse(self.path).query)
         date_value = (query.get("date", [""])[0] or "").strip()
-        where = "WHERE user_id = ? OR user_id IS NULL"
+        where = "WHERE user_id = ? OR user_id IS NULL OR entity = 'todo'"
         params: list = [user["id"]]
         if date_value:
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_value):
                 raise ValueError("日志日期格式不正确")
-            where = "WHERE (user_id = ? OR user_id IS NULL) AND substr(created_at, 1, 10) = ?"
+            where = "WHERE (user_id = ? OR user_id IS NULL OR entity = 'todo') AND substr(created_at, 1, 10) = ?"
             params.append(date_value)
         with db() as conn:
             rows = conn.execute(
